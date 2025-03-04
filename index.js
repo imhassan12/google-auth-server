@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
-const { v4: uuidv4 } = require("uuid"); // Add uuid package
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 app.use(express.json());
@@ -14,25 +14,29 @@ const REDIRECT_URI = process.env.REDIRECT_URI;
 
 let tokenStorage = {};
 
-// Step 1: Redirect user to Google OAuth with a unique session ID
 app.get("/auth/google", (req, res) => {
-    const sessionId = uuidv4(); // Generate unique session ID
+    const sessionId = uuidv4();
+    tokenStorage[sessionId] = { status: "pending" }; // Initialize storage
+    console.log(`Generated sessionId: ${sessionId}`);
+
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `response_type=code&client_id=${CLIENT_ID}` +
         `&redirect_uri=${REDIRECT_URI}` +
         `&scope=openid%20email%20profile&access_type=offline&prompt=consent` +
-        `&state=${sessionId}`; // Pass session ID in the state parameter
+        `&state=${sessionId}`;
 
-    res.redirect(authUrl);
+    // Return sessionId to Unity before redirecting
+    res.json({ sessionId, authUrl });
 });
 
-// Step 2: Handle Google OAuth callback
 app.get("/auth/callback", async (req, res) => {
     const code = req.query.code;
-    const sessionId = req.query.state; // Retrieve session ID from state
+    const sessionId = req.query.state;
+    console.log(`Callback - Code: ${code}, SessionId: ${sessionId}`);
 
-    if (!code || !sessionId) {
-        return res.status(400).send("No authorization code or session ID found.");
+    if (!code || !sessionId || !tokenStorage[sessionId]) {
+        console.error("Invalid callback parameters");
+        return res.status(400).send("Invalid request");
     }
 
     try {
@@ -47,23 +51,28 @@ app.get("/auth/callback", async (req, res) => {
         });
 
         const { id_token } = tokenResponse.data;
-        tokenStorage[sessionId] = id_token; // Store with session ID as key
+        tokenStorage[sessionId] = { status: "completed", id_token };
+        console.log(`Stored token for ${sessionId}: ${id_token}`);
 
-        res.send("<h2>Authentication successful! You can close this window and return to the app.</h2>");
+        res.send("<h2>Authentication successful! Close this window.</h2>");
     } catch (error) {
         console.error("Token exchange failed:", error.response?.data || error.message);
         res.status(500).send("Authentication failed");
     }
 });
 
-// Step 3: Unity fetches the token using session ID
 app.get("/auth/token", (req, res) => {
-    const sessionId = req.query.sessionId; // Expect session ID from Unity
-    if (!sessionId || !tokenStorage[sessionId]) {
+    const sessionId = req.query.sessionId;
+    console.log(`Token request for sessionId: ${sessionId}`);
+
+    if (!sessionId || !tokenStorage[sessionId] || tokenStorage[sessionId].status === "pending") {
+        console.log(`Token not ready for ${sessionId}`);
         res.status(404).json({ error: "Token not available" });
     } else {
-        res.json({ id_token: tokenStorage[sessionId] });
-        delete tokenStorage[sessionId]; // Clear after sending
+        const token = tokenStorage[sessionId].id_token;
+        res.json({ id_token: token });
+        delete tokenStorage[sessionId];
+        console.log(`Sent and cleared token for ${sessionId}`);
     }
 });
 
