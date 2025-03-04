@@ -11,17 +11,21 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI;
 
-
-
-// Temporary storage for user tokens
+// Store tokens per session
 let tokenStorage = {};
 
 // Step 1: Redirect user to Google OAuth
 app.get("/auth/google", (req, res) => {
+    const sessionId = req.query.sessionId; // Get session ID from Unity
+    if (!sessionId) {
+        return res.status(400).json({ error: "Missing session ID" });
+    }
+
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `response_type=code&client_id=${CLIENT_ID}` +
         `&redirect_uri=${REDIRECT_URI}` +
-        `&scope=openid%20email%20profile&access_type=offline&prompt=consent`;
+        `&scope=openid%20email%20profile&access_type=offline&prompt=consent` +
+        `&state=${sessionId}`; // Attach session ID
 
     res.redirect(authUrl);
 });
@@ -29,8 +33,10 @@ app.get("/auth/google", (req, res) => {
 // Step 2: Handle Google OAuth callback
 app.get("/auth/callback", async (req, res) => {
     const code = req.query.code;
-    if (!code) {
-        return res.status(400).send("No authorization code found.");
+    const sessionId = req.query.state; // Retrieve session ID
+
+    if (!code || !sessionId) {
+        return res.status(400).send("Invalid request.");
     }
 
     try {
@@ -47,8 +53,8 @@ app.get("/auth/callback", async (req, res) => {
 
         const { id_token } = tokenResponse.data;
 
-        // Store token temporarily
-        tokenStorage["user"] = id_token; // Store with a key
+        // Store token with session ID
+        tokenStorage[sessionId] = id_token;
 
         res.send("<h2>Authentication successful! You can close this window and return to the app.</h2>");
     } catch (error) {
@@ -59,14 +65,15 @@ app.get("/auth/callback", async (req, res) => {
 
 // Step 3: Unity fetches the token
 app.get("/auth/token", (req, res) => {
-    if (tokenStorage["user"]) {
-        res.json({ id_token: tokenStorage["user"] });
-        delete tokenStorage["user"]; // Clear after sending
+    const sessionId = req.query.sessionId; // Get session ID from request
+
+    if (sessionId && tokenStorage[sessionId]) {
+        res.json({ id_token: tokenStorage[sessionId] });
+        delete tokenStorage[sessionId]; // Clear after sending
     } else {
         res.status(404).json({ error: "Token not available" });
     }
 });
-
 
 // Start the server
 const PORT = process.env.PORT || 5000;
